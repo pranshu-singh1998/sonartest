@@ -1,0 +1,39 @@
+pipeline {
+    agent any
+
+    tools {
+        maven 'Maven 3.9.10'  // Must match the Maven name configured in Jenkins > Global Tool Configuration
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                git 'https://github.com/pranshu-singh1998/sonartest'  // Replace with your Git repo
+            }
+        }
+
+        stage('Build') {
+            steps {
+                sh 'mvn clean install'
+            }
+        }
+
+        stage('Test') {
+            steps {
+                sh 'mvn test'
+            }
+        }
+
+        stage('Package') {
+            steps {
+                archiveArtifacts artifacts: 'target/*.jar', fingerprint: true
+            }
+        }
+    }
+
+    post {
+        always {
+            junit 'target/surefire-reports/*.xml'
+        }
+    }
+}
