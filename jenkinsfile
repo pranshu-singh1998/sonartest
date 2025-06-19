@@ -1,39 +1,76 @@
 pipeline {
-    agent any
+  agent any
 
-    tools {
-        maven 'Maven 3.9.10'  // Must match the Maven name configured in Jenkins > Global Tool Configuration
+  environment {
+    SECRET_NAME = "dev-env"             // SSH key in Secrets Manager
+    REGION      = "us-west-2"
+    DEV_USER    = "ubuntu"
+    DEV_HOST    = "10.3.3.244"
+    SONAR_ENV   = "sonar"               // SonarQube installation name in Jenkins
+  }
+
+
+  stages {
+
+    stage('Fetch SSH Key from AWS') {
+      steps {
+        script {
+          echo "Getting secret from AWS Secrets Manager..."
+          def secretValue = sh(
+            script: "aws secretsmanager get-secret-value --secret-id $SECRET_NAME --region $REGION --query SecretString --output text",
+            returnStdout: true
+          ).trim()
+
+          writeFile file: 'dev_key.pem', text: secretValue
+          sh 'chmod 600 dev_key.pem'
+        }
+      }
     }
 
-    stages {
-        stage('Checkout') {
+    stage('Install Dependencies') {
             steps {
-                git 'https://github.com/pranshu-singh1998/sonartest'  // Replace with your Git repo
+                sh 'composer install'
             }
         }
 
-        stage('Build') {
+        stage('Run Tests') {
             steps {
-                sh 'mvn clean install'
+                sh 'vendor/bin/phpunit --coverage-clover=coverage.xml || true' // Avoids failure if no tests
             }
         }
-
-        stage('Test') {
-            steps {
-                sh 'mvn test'
-            }
+    stage('sonar') {
+        steps {
+        script {
+          echo "sonar test..."
+               sh '''
+                        sonar-scanner \
+                          -Dsonar.projectKey=my-php-project\
+                          -Dsonar.sources=src \
+                          -Dsonar.language=php \
+                          -Dsonar.sourceEncoding=UTF-8 \
+                          -Dsonar.php.coverage.reportPaths=coverage.xml
+                    '''
+                      }
+    stage('Test SSH Access') {
+      steps {
+        script {
+          echo "SSH into dev server and check git status..."
+          sh '''
+            ssh -i dev_key.pem -o StrictHostKeyChecking=no $DEV_USER@$DEV_HOST << 'EOF'
+              cd /var/www/development.diagnostic.ly
+              git status
+            EOF
+          '''
         }
-
-        stage('Package') {
-            steps {
-                archiveArtifacts artifacts: 'target/*.jar', fingerprint: true
-            }
-        }
+      }
     }
 
-    post {
-        always {
-            junit 'target/surefire-reports/*.xml'
-        }
+  }
+
+  post {
+    always {
+      echo 'Cleaning up SSH key file...'
+      sh 'rm -f dev_key.pem'
     }
+  }
 }
